@@ -1,0 +1,8 @@
+# pytorch > 2.0
+scipy
+numpy
+matplotlib
+numba
+pyDOE
+skopt
+pyDOE
