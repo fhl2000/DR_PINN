@@ -199,13 +199,17 @@ class CompoundGeometry:
   def interface_normal_vector(self,x):
     return self.subdomain1.boundary_normal(x)
 
-  def interface_sampler(self,max_n,random=None):
+
+  def interface_sampler(self,max_n,random=None, h=None):
     #  `random` shall be one of the [None, "pseudo", "LHS", "Halton", "Hammersley", "Sobol"]
     # if `random`=None, a uniform sampler is performed
     if random:
       return self.subdomain1.random_boundary_points(max_n,random=random)
     else:
-      return self.subdomain1.uniform_boundary_points(max_n)
+      if h:
+        return self.subdomain1.uniform_boundary_points(h=h)
+      else:
+        return self.subdomain1.uniform_boundary_points(max_n)
 
   def boundary_sampler(self,max_n, random=None):
     if random:
@@ -213,11 +217,17 @@ class CompoundGeometry:
     else:
       return self.whole_domain.uniform_boundary_points(max_n)
 
-  def whole_sampler(self,n, random=None):
+  def whole_sampler(self,n, random=None, min_sample_sub1=None):
     if random:
-      return self.whole_domain.random_points(n,random=random)
+      points = self.whole_domain.random_points(n,random=random)
     else:
-      return self.whole_domain.uniform_points(n)
+      points = self.whole_domain.uniform_points(n)
+    if min_sample_sub1 is not None:
+      count1= np.sum(self.subdomain1.inside(points))
+      if count1< min_sample_sub1:
+        addition_points = self.subdomain1.random_points(min_sample_sub1, random=random)
+        points = np.concatenate([points[~self.subdomain1.inside(points)], addition_points],axis=0)
+    return points
 
   def uniform_sampler(self,n):
     """
@@ -230,13 +240,15 @@ class CompoundGeometry:
     return whole_point,inner_point,outer_point
 
 
-def databuilderforPatch(g_co,reference_u,n_interface=100,device="cpu"):
+# for constants or piecewise constants coefficients
+
+def databuilderforPatch(g_co,reference_u,n_interface=100,device="cpu", h_interface=None):
   """
   last_x_dict: if None, collect new data, otherwise it will append new data to old data
   """
   x_dict={}
   data_dict={}
-  interface=torch.tensor(g_co.interface_sampler(n_interface)).to(torch.float64)
+  interface=torch.tensor(g_co.interface_sampler(n_interface, h=h_interface)).to(torch.float64)
   
 
   w=reference_u.w(interface)
@@ -252,6 +264,7 @@ def databuilderforPatch(g_co,reference_u,n_interface=100,device="cpu"):
                           }
 
   return x_dict,data_dict
+
 
 def databuilderforBase(g_base, patchnet, reference_u, random_method=None , n_inner=900, n_boundary=100, n_interface=120, device="cpu"):
   """
@@ -293,7 +306,38 @@ def databuilderforBase(g_base, patchnet, reference_u, random_method=None , n_inn
 
   return x_dict,data_dict
 
-def databuilderforBaseVC(g_base, patchnet, reference_u, random_method=None , n_inner=900, n_boundary=100, n_interface=120, device="cpu"):
+# for variable coefficients (continuous or discontinuous)
+
+def databuilderforPatchVC(g_co,reference_u,n_interface=100,device="cpu", h_interface=None):
+  """
+  For variable coefficents case where coefficents are functions
+  
+  """
+  x_dict={}
+  data_dict={}
+  interface=torch.tensor(g_co.interface_sampler(n_interface,h=h_interface)).to(torch.float64)
+  
+
+  w=reference_u.w(interface)
+  v=reference_u.v(interface)
+  interface_normal_vector=torch.tensor(g_co.interface_normal_vector(interface.numpy())).to(torch.float64)
+  f_jump=(reference_u.f2_(interface)-reference_u.f1_(interface))[:,None].detach()
+
+  ibeta1=reference_u.beta1(interface)[:,None].detach()
+  igradbeta1=cal_derivative(interface,reference_u.beta1)
+
+  x_dict["interface"]=interface.requires_grad_().to(device)
+
+  data_dict["interface"]={"w":-w.to(device),"v":-v.to(device),
+                          "interface_normal_vector":interface_normal_vector.to(device),
+                          "f_jump":f_jump.to(device),
+                          "ibeta1":ibeta1.to(device),
+                          "igradbeta1":igradbeta1.to(device)
+                          }
+
+  return x_dict,data_dict
+
+def databuilderforBaseVC(g_base, patchnet, reference_u, random_method=None , n_inner=900, n_boundary=100, n_interface=120, device="cpu", h_interface=None):
   """
     For variable coefficents case where coefficents are functions
 
@@ -307,7 +351,7 @@ def databuilderforBaseVC(g_base, patchnet, reference_u, random_method=None , n_i
   
   inner=torch.tensor(g_base.whole_sampler(n_inner,random=random_method)).to(torch.float64)
   boundary=torch.tensor(g_base.boundary_sampler(n_boundary)).to(torch.float64)
-  interface=torch.tensor(g_base.interface_sampler(n_interface)).to(torch.float64)
+  interface=torch.tensor(g_base.interface_sampler(n_interface,h=h_interface)).to(torch.float64)
 
   f=reference_u.f(inner)
   patch_index=g_base.inside_u1(inner.numpy())
@@ -323,7 +367,7 @@ def databuilderforBaseVC(g_base, patchnet, reference_u, random_method=None , n_i
   
   beta=beta1(inner)[:,None]
   beta[~patch_index]=beta2(inner[~patch_index])[:,None]
-  gradbeta=torch.ones(len(inner),inner.shape[1])
+  gradbeta=torch.ones(len(inner),inner.shape[1], dtype=torch.float64)
   gradbeta[patch_index]=cal_derivative(inner[patch_index],beta1)
   gradbeta[~patch_index]=cal_derivative(inner[~patch_index],beta2)
   ibeta1=beta1(interface)[:,None]
@@ -340,7 +384,7 @@ def databuilderforBaseVC(g_base, patchnet, reference_u, random_method=None , n_i
 
   return x_dict,data_dict
 
-def databuilderforAll(g_base, reference_u, random_method=None , n_inner=900, n_boundary=100, n_interface=120, device="cpu"):
+def databuilderforAll(g_base, reference_u, random_method=None , interface_random=None, n_inner=900, n_boundary=100, n_interface=120, device="cpu", h_interface=None):
   """
   for Basenet and Patchnet together, with variable coefficents
   `random` shall be one of the [None, "pseudo", "LHS", "Halton", "Hammersley", "Sobol"]
@@ -354,7 +398,10 @@ def databuilderforAll(g_base, reference_u, random_method=None , n_inner=900, n_b
 
   inner=torch.tensor(g_base.whole_sampler(n_inner,random=random_method)).to(torch.float64)
   boundary=torch.tensor(g_base.boundary_sampler(n_boundary)).to(torch.float64)
-  interface=torch.tensor(g_base.interface_sampler(n_interface)).to(torch.float64)
+  if interface_random:
+    interface=torch.tensor(g_base.interface_sampler(n_interface,random=interface_random)).to(torch.float64)
+  else:
+    interface=torch.tensor(g_base.interface_sampler(n_interface,h=h_interface)).to(torch.float64)
 
   f=reference_u.f(inner)
   patch_index=g_base.inside_u1(inner.numpy())

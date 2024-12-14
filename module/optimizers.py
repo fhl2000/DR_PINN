@@ -1,12 +1,10 @@
 import torch
 import numpy as np
 
-# from functorch import make_functional, vmap, grad, jacrev
 from torch.func import vmap,grad,jacrev,functional_call
-import functools
 import os
 import time
-from .utils import params_pack,params_unpack
+from .utils import params_pack,params_unpack,clear_cuda_cache
 # device = torch.device('cpu')
 # torch.set_default_dtype(torch.float64)
     
@@ -218,7 +216,7 @@ def adam_train(gen_train_dic, model, epoch=1000, learning_rate=5.e-3,continue_tr
             history.append(loss.item())
         print(f"epoch: {iter}, loss: {loss.item():.4e} ")
         scheduler.step()
-        
+        clear_cuda_cache()
         if iter%20 ==19:
             if model_path: torch.save({ "state_dict": model.state_dict(),"epoch":iter, "history": history}, model_path)
 
@@ -256,9 +254,12 @@ def lbfgs_train(gen_train_dic, model, max_iter=10000, continue_training=False, m
         loss.backward()
         history.append(loss.item())
         if next(counter)%100==0:
+            clear_cuda_cache()
             print(f"iter{len(history)},loss: {loss.item():.4e}")
             if model_path: torch.save({ "state_dict": model.state_dict(),"history": history}, model_path)
-            
+            if loss.isnan():
+                print("Loss is NaN, exiting the program")
+                exit()
         return loss
     time1=time.time()
     optLbfgs.step(closure=closure)

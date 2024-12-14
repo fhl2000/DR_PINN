@@ -31,19 +31,6 @@ def compute_loss_f(func_params, X_inner, Rf_inner):
     loss_Res = -laplace - Rf_inner
     return loss_Res.flatten()
 
-def compute_loss_f_inhom(func_params, X_inner, Beta, Rf_inner):
-    ### compute -beta*laplace(U)-f in the domain ,where beta is constant
-    def f(x, func_params):
-        output = functional_call(compute_loss_f_inhom._model,func_params, x)
-        return output.squeeze(0)
-    grad2_f = (jacrev(grad(f)))(X_inner, func_params)
-    dudX2 = (torch.diagonal(grad2_f))
-    
-    # laplace = (dudX2[0] + dudX2[1])
-    laplace = torch.sum(dudX2)
-    
-    loss_Res = -Beta*laplace - Rf_inner
-    return loss_Res.flatten()
 
 def compute_loss_inj(func_params, X_interf, U_inj):
     # derivative normal jump on the interface for training U (rawnet)
@@ -56,20 +43,6 @@ def compute_loss_inj(func_params, X_interf, U_inj):
     loss_inj =  2 * grad(f,argnums=1)(X_interf,z,func_params)* torch.norm(grad(phi)(X_interf))- U_inj
     return loss_inj.flatten()
 
-# def compute_loss_inj2(func_params, X_interf, U_inj, Normal_ij):
-#     # derivative normal jump on the interface for training U (rawnet), inhomogeneous cases( piecewise constant beta)
-#     def f(x,z,func_params):
-#         x=torch.hstack([x,z])
-#         output = functional_call(compute_loss_inj2._model, func_params, x)
-#         return output.squeeze(0)
-#     phi=compute_loss_inj2._phi
-#     beta1=compute_loss_inj2._beta1
-#     beta2=compute_loss_inj2._beta2
-#     z=torch.tensor(0.0,dtype=torch.float64,device=X_interf.device)
-#     df=grad(lambda x:f(x,phi(x),func_params))(X_interf)
-#     loss_inj =  (beta2-beta1)*torch.sum(df*Normal_ij)+ \
-#           2 * beta1* grad(f,argnums=1)(X_interf,z,func_params)* torch.norm(grad(phi)(X_interf))- U_inj
-#     return loss_inj.flatten()
 
 def compute_loss_f_vc(func_params, X_ij, Rf_inner, beta, gradbeta):
     ### compute -div(beta*div(U))-f in the domain, beta(x) is the varible coefficient
@@ -97,6 +70,7 @@ def compute_loss_inj_vc(func_params, X_interf, U_inj, Normal_ij,Ibeta1,Ibeta2):
     loss_inj =  (Ibeta2-Ibeta1)*torch.sum(df*Normal_ij)+ \
           2 * Ibeta1* grad(f,argnums=1)(X_interf,z,func_params)* torch.norm(grad(phi)(X_interf))- U_inj
     return loss_inj.flatten()
+
 # decoupling approach training V
 def compute_loss_fj(func_params, X_inner, Rf_inner):
     ### compute laplace(V)-[f] on the interface, for training patchnet 
@@ -128,7 +102,34 @@ def compute_loss_normal_jump(func_params, X_ij, Normal_ij, Unj_ij):
         
     return loss_normal_jump.flatten()
 
+# variable beta
+def compute_loss_fj_vc(func_params, X_interf, Rf_interf, ibeta, igradbeta):
+    ### compute div(beta*div(V))-[f] on the interface, for training patchnet, variable but continuous beta
+    def f(x, func_params):
+        output = functional_call(compute_loss_fj_vc._model,func_params, x)
 
+        return output.squeeze(0)
+    grad_f = grad(f)(X_interf, func_params)   # jacobian 
+    grad2_f = (jacrev(grad(f)))(X_interf, func_params)   # hessian
+    dudX2 = (torch.diagonal(grad2_f))
+    
+    lhs = ibeta*torch.sum(dudX2)+torch.sum(grad_f*igradbeta)
+    loss_Res = lhs - Rf_interf
+
+    return loss_Res.flatten()
+
+def compute_loss_normal_jump_vc(func_params, X_ij, Normal_ij, Unj_ij, iBeta1):
+    # derivative normal jump for training patchnet, variable beta
+    def f(x, func_params):
+        output = functional_call(compute_loss_normal_jump_vc._model,func_params, x)
+        return output.squeeze(0)
+    
+    grad_f = (grad(f))(X_ij, func_params)
+    df = (grad_f)
+    normal_jump_pred = torch.sum(Normal_ij*df)
+    loss_normal_jump = iBeta1*normal_jump_pred - Unj_ij
+        
+    return loss_normal_jump.flatten()
 
 #===============================================
 # loss for co-training 
@@ -179,48 +180,6 @@ def setup_fm(model):
     for loss in loss_list:
         loss._model = model
 
-# use torch.autograd
-def jacobian(y,xs,i=0,j=None):
-    y = y[:, i : i + 1] if y.shape[1] > 1 else y
-    g = torch.autograd.grad(
-                  y, xs, grad_outputs=torch.ones_like(y), create_graph=True, retain_graph=True
-              )[0]
-    return (
-            g if j is None or xs.shape[1] == 1 else g[:, j : j + 1]
-        )
-def hessian(ys, xs, component=None, i=0, j=0, grad_y=None):
-    dim_y = ys.shape[1]
-    if dim_y > 1:
-        if component is None:
-            raise ValueError("The component of y is missing.")
-        if component >= dim_y:
-            raise ValueError(
-                "The component of y={} cannot be larger than the dimension={}.".format(
-                    component, dim_y
-                )
-            )
-    else:
-        if component is not None:
-            raise ValueError("Do not use component for 1D y.")
-        component = 0
-
-    if grad_y is None:
-        grad_y = jacobian(ys, xs, i=component, j=None)
-    return jacobian(grad_y, xs, i=i, j=j)
-
-loss_fn = torch.nn.MSELoss(reduction="mean")
-def loss_inner(model, x, U_f):
-  y=model(x)
-  grad_y= jacobian(y,x)
-  negative_laplace =0
-  for k in range(x.shape[1]):
-    negative_laplace=negative_laplace-hessian(y,x,i=k,j=k,grad_y=grad_y)
-  return loss_fn(negative_laplace, U_f)
-        
-def loss_boundary(model, x, U_bd):
-  return loss_fn(model(x),U_bd)*50
-
-
 
 # test
 if __name__=="__main__":
@@ -255,4 +214,4 @@ if __name__=="__main__":
     print(vmap(compute_loss_bd_composed,(None,0,0))(func_params_r,x,U_inj))
     print(vmap(compute_loss_jump_composed,(None,0,0))(func_params_r,x,U_inj))
 
-    # compute_loss_f_inhom_vc(func_params_r,x[0],U_inj[0],beta[0],gradbeta[0])
+    # compute_loss_f_vc(func_params_r,x[0],U_inj[0],beta[0],gradbeta[0])

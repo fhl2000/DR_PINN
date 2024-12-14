@@ -4,5 +4,5 @@ numpy
 matplotlib
 numba
 pyDOE
-skopt
-pyDOE
+scikit-optimize
+sklearn

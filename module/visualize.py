@@ -75,6 +75,7 @@ def eval_2d(rawnet,patchnet,g_base,reference_u,device="cpu", save_name=None):
     plot_results3d(x,y_real,"ground_truth",save_name=save_name+"_ground_truth")
     plot_results3d(x,abs_error,f"abs_error, max={L_inf}",save_name=save_name+"_abs_error")
     plot_results3d(x,y,"result",save_name=save_name+"_result")
+    return L_inf, L_2
 
 def eval_2d_composed(net,g_base,reference_u,device="cpu"):
     x=g_base.whole_sampler(10000).astype(np.float64)
@@ -92,6 +93,7 @@ def eval_2d_composed(net,g_base,reference_u,device="cpu"):
     plot_results3d(x,y_real,"ground_truth")
     plot_results3d(x,abs_error,f"abs_error, max={L_inf}")
     plot_results3d(x,y_pred,"result")
+    return L_inf, L_2
 
 def eval_3d(rawnet,patchnet,g_base,reference_u,device="cpu"):
     x=g_base.whole_sampler(100000).astype(np.float64)
@@ -102,9 +104,8 @@ def eval_3d(rawnet,patchnet,g_base,reference_u,device="cpu"):
     abs_error= np.abs(y-y_real)
     L_inf=np.max(abs_error)
     L_2=np.linalg.norm(abs_error)/np.sqrt(len(abs_error))
-    relative_l2= L_2/(np.linalg.norm(y_real)/np.sqrt(len(y_real)))
-    print(f"L_inf:{L_inf:.4e}, L_2:{L_2:.4e}", f"relative_L2:{relative_l2:.4e}")
-    
+    print(f"L_inf:{L_inf:.4e}, L_2:{L_2:.4e}")
+    return L_inf, L_2
 
 def eval_3d_composed(net, g_base, reference_u, device="cpu"):
     x=g_base.whole_sampler(100000).astype(np.float64)
@@ -118,8 +119,8 @@ def eval_3d_composed(net, g_base, reference_u, device="cpu"):
     abs_error= np.abs(y_pred-y_real)
     L_inf=np.max(abs_error)
     L_2=np.linalg.norm(abs_error)/np.sqrt(len(abs_error))
-    relative_l2= L_2/(np.linalg.norm(y_real)/np.sqrt(len(y_real)))
-    print(f"L_inf:{L_inf:.4e}, L_2:{L_2:.4e}, relative_L2:{relative_l2:.4e}")
+    print(f"L_inf:{L_inf:.4e}, L_2:{L_2:.4e}")
+    return L_inf, L_2
 
 
 def eval_2d_FD(U_pred,patchnet,g_base,reference_u,resolution,device="cpu"):

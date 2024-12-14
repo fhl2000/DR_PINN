@@ -87,7 +87,13 @@ def seed_all(seed):
   np.random.seed(seed)  # Numpy module.
 
 
-
 def params_to_device(params, device):
   for key,val in params.items():
     params[key]=val.to(device)
+
+import gc
+from .gradient import caches_clear
+def clear_cuda_cache():
+    caches_clear()
+    gc.collect()
+    torch.cuda.empty_cache()
