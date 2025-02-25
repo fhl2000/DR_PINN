@@ -1,7 +1,7 @@
 # DR_PINN
 
 Official implementation of the paper "Novel and general 
-discontinuity-removing PINNs for elliptic interface problems".
+discontinuity-removing PINNs for elliptic interface problems".(https://doi.org/10.1016/j.jcp.2025.113861)
 
 DR_PINN is a deep learning framework designed for solving elliptic interface problems with high accuracy optimization. The code is organized on modularity, enabling users to easily customize, extend, and integrate its various components into their projects. 
 
